@@ -28,6 +28,12 @@ app.post('/api/oauth/token', async (req, res) => {
       return res.status(400).json({ error: 'Missing code parameter' });
     }
 
+    console.log('Token exchange request - Code:', code);
+    console.log('Environment:', {
+      clientId: process.env.PAYMAN_CLIENT_ID ? 'Present' : 'Missing',
+      clientSecret: process.env.PAYMAN_CLIENT_SECRET ? 'Present' : 'Missing'
+    });
+
     const client = PaymanClient.withAuthCode(
       {
         clientId: process.env.PAYMAN_CLIENT_ID,
@@ -37,10 +43,26 @@ app.post('/api/oauth/token', async (req, res) => {
     );
 
     const tokenResponse = await client.getAccessToken();
+    
+    console.log('Token response received:', tokenResponse);
+
+    // Handle different possible response formats with null checks
+    if (!tokenResponse) {
+      console.error('No response from token exchange');
+      return res.status(500).json({ error: 'No response from token exchange' });
+    }
+
+    const accessToken = tokenResponse.accessToken || tokenResponse.access_token;
+    const expiresIn = tokenResponse.expiresIn || tokenResponse.expires_in || 3600;
+
+    if (!accessToken) {
+      console.error('No access token in response:', tokenResponse);
+      return res.status(500).json({ error: 'No access token received from Payman' });
+    }
 
     res.json({
-      accessToken: tokenResponse.accessToken,
-      expiresIn: tokenResponse.expiresIn,
+      accessToken,
+      expiresIn,
     });
   } catch (error) {
     console.error('Token exchange failed:', error);
@@ -96,11 +118,26 @@ app.get('/api/oauth/callback', async (req, res) => {
 
     const tokenResponse = await client.getAccessToken();
     
+    console.log('Token response received:', tokenResponse);
+
+    // Handle different possible response formats with null checks
+    if (!tokenResponse) {
+      throw new Error('No response from token exchange');
+    }
+
+    const accessToken = tokenResponse.accessToken || tokenResponse.access_token;
+    const expiresIn = tokenResponse.expiresIn || tokenResponse.expires_in || 3600;
+
+    if (!accessToken) {
+      console.error('No access token in callback response:', tokenResponse);
+      throw new Error('No access token received from Payman');
+    }
+    
     console.log('Token exchange successful');
 
     // Redirect to frontend with the access token
     res.redirect(
-      `${redirectBase}/dashboard?access_token=${encodeURIComponent(tokenResponse.accessToken)}&expires_in=${encodeURIComponent(tokenResponse.expiresIn)}`
+      `${redirectBase}/dashboard?access_token=${encodeURIComponent(accessToken)}&expires_in=${encodeURIComponent(expiresIn)}`
     );
   } catch (error) {
     console.error('Token Exchange Error:', error);
@@ -108,6 +145,32 @@ app.get('/api/oauth/callback', async (req, res) => {
       `${redirectBase}/dashboard?error=token_exchange_failed&error_description=${encodeURIComponent(error.message)}`
     );
   }
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    env: {
+      PAYMAN_CLIENT_ID: process.env.PAYMAN_CLIENT_ID ? 'Present' : 'Missing',
+      PAYMAN_CLIENT_SECRET: process.env.PAYMAN_CLIENT_SECRET ? 'Present' : 'Missing',
+    }
+  });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'AutoCart Backend API',
+    status: 'running',
+    timestamp: new Date().toISOString(),
+    endpoints: [
+      'GET /health - Health check',
+      'POST /api/oauth/token - Exchange OAuth code for token',
+      'GET /api/oauth/callback - OAuth callback handler'
+    ]
+  });
 });
 
 const PORT = process.env.PORT || 5000;
