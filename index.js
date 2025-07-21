@@ -5,7 +5,15 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const app = express();
-app.use(cors({ origin: "https://auto-cart.vercel.app" }));
+app.use(cors({ 
+  origin: [
+    "https://auto-cart.vercel.app",
+    "http://localhost:8080",
+    "http://localhost:5173",
+    "http://localhost:3000"
+  ],
+  credentials: true
+}));
 app.use(express.json());
 
 // Token exchange endpoint
