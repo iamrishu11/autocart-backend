@@ -16,7 +16,7 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Token exchange endpoint
+// Token exchange endpoint (for frontend AJAX calls)
 app.post('/api/oauth/token', async (req, res) => {
   try {
     const pkg = await import('@paymanai/payman-ts');
@@ -48,48 +48,64 @@ app.post('/api/oauth/token', async (req, res) => {
   }
 });
 
-// OAuth callback endpoint
+// OAuth callback endpoint (where Payman redirects after user consent)
 app.get('/api/oauth/callback', async (req, res) => {
   const { code, error, error_description, state } = req.query;
 
+  // Determine redirect base URL based on referrer or default to production
+  const getRedirectBase = () => {
+    const referer = req.get('Referer');
+    if (referer && referer.includes('localhost')) {
+      if (referer.includes(':8080')) return 'http://localhost:8080';
+      if (referer.includes(':5173')) return 'http://localhost:5173';
+      if (referer.includes(':3000')) return 'http://localhost:3000';
+    }
+    return 'https://auto-cart.vercel.app';
+  };
+
+  const redirectBase = getRedirectBase();
+
   if (error) {
-    // Redirect to frontend with error details
+    console.error('OAuth Error:', error, error_description);
     return res.redirect(
-      `https://auto-cart.vercel.app/dashboard?error=${encodeURIComponent(error)}&error_description=${encodeURIComponent(error_description || '')}`
+      `${redirectBase}/dashboard?error=${encodeURIComponent(error)}&error_description=${encodeURIComponent(error_description || '')}`
     );
   }
 
   if (!code) {
-    return res.status(400).json({ error: 'Missing authorization code' });
+    console.error('Missing authorization code');
+    return res.redirect(
+      `${redirectBase}/dashboard?error=missing_code&error_description=${encodeURIComponent('No authorization code received')}`
+    );
   }
 
-  // TODO: Validate the `state` parameter for CSRF protection
-  // Example: Compare `state` with a stored value in a session or cookie
-
   try {
-    // Exchange code for access token using the /api/oauth/token endpoint
-    const response = await fetch('https://autocart-backend-8o8e.onrender.com/api/oauth/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    // DIRECTLY exchange code for token using Payman SDK (not HTTP call)
+    const pkg = await import('@paymanai/payman-ts');
+    const { PaymanClient } = pkg;
+
+    console.log('Exchanging code:', code);
+    
+    const client = PaymanClient.withAuthCode(
+      {
+        clientId: process.env.PAYMAN_CLIENT_ID,
+        clientSecret: process.env.PAYMAN_CLIENT_SECRET,
       },
-      body: JSON.stringify({ code }),
-    });
+      code
+    );
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || 'Token exchange failed');
-    }
+    const tokenResponse = await client.getAccessToken();
+    
+    console.log('Token exchange successful');
 
     // Redirect to frontend with the access token
     res.redirect(
-      `https://auto-cart.vercel.app/dashboard?access_token=${encodeURIComponent(data.accessToken)}&expires_in=${encodeURIComponent(data.expiresIn)}`
+      `${redirectBase}/dashboard?access_token=${encodeURIComponent(tokenResponse.accessToken)}&expires_in=${encodeURIComponent(tokenResponse.expiresIn)}`
     );
   } catch (error) {
     console.error('Token Exchange Error:', error);
     res.redirect(
-      `https://auto-cart.vercel.app/dashboard?error=token_exchange_failed&error_description=${encodeURIComponent(error.message)}`
+      `${redirectBase}/dashboard?error=token_exchange_failed&error_description=${encodeURIComponent(error.message)}`
     );
   }
 });
